@@ -42,6 +42,30 @@ from sam3.model.vl_combiner import SAM3VLBackbone
 from sam3.sam.transformer import RoPEAttention
 
 
+def _resolve_device(device: str):
+    """Resolve device taking into account SAM3_FORCE_CPU_INIT env flag.
+
+    When SAM3_FORCE_CPU_INIT=="1", we always return "cpu" so that model
+    construction (including any precomputations) runs fully on CPU. This is
+    useful for environments like Modal's snapshot builder which are CPU-only.
+    """
+
+    # Force CPU init for snapshot-building or other CPU-only flows.
+    if os.getenv("SAM3_FORCE_CPU_INIT") == "1":
+        return "cpu"
+
+    # Fall back to the original behavior: explicit device if provided,
+    # otherwise prefer CUDA when available.
+    if device is None:
+        return "cuda" if torch.cuda.is_available() else "cpu"
+
+    if device == "cuda" and not torch.cuda.is_available():
+        # Gracefully fall back instead of raising at init time.
+        return "cpu"
+
+    return device
+
+
 # Setup TensorFloat-32 for Ampere GPUs if available
 def _setup_tf32() -> None:
     """Enable TensorFloat-32 for Ampere GPUs if available."""
@@ -546,9 +570,16 @@ def _load_checkpoint(model, checkpoint_path):
 
 
 def _setup_device_and_mode(model, device, eval_mode):
-    """Setup model device and evaluation mode."""
+    """Setup model device and evaluation mode.
+
+    Uses `_resolve_device` so that environments without CUDA or with
+    SAM3_FORCE_CPU_INIT=1 can safely construct the model on CPU.
+    """
+    device = _resolve_device(device)
     if device == "cuda":
-        model = model.cuda()
+        model = model.to(device="cuda")
+    else:
+        model = model.to(device="cpu")
     if eval_mode:
         model.eval()
     return model
@@ -780,10 +811,12 @@ def build_sam3_video_model(
         )
         if missing_keys:
             print(f"Missing keys: {missing_keys}")
-        if unexpected_keys:
-            print(f"Unexpected keys: {unexpected_keys}")
+    if unexpected_keys:
+        print(f"Unexpected keys: {unexpected_keys}")
 
-    model.to(device=device)
+    # Respect SAM3_FORCE_CPU_INIT and CUDA availability when selecting device
+    device = _resolve_device(device)
+    model = model.to(device=device)
     return model
 
 

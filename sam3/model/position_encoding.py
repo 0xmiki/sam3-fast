@@ -1,6 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates. All Rights Reserved
 
 import math
+import os
 from typing import Optional
 
 import torch
@@ -43,8 +44,16 @@ class PositionEmbeddingSine(nn.Module):
                 (precompute_resolution // 16, precompute_resolution // 16),
                 (precompute_resolution // 32, precompute_resolution // 32),
             ]
+
+            # During CPU-only initialization (e.g. Modal snapshot builder), we
+            # cannot allocate CUDA tensors. Honor SAM3_FORCE_CPU_INIT so that
+            # precomputation runs on CPU in those environments.
+            dev = "cuda"
+            if os.getenv("SAM3_FORCE_CPU_INIT") == "1":
+                dev = "cpu"
+
             for size in precompute_sizes:
-                tensors = torch.zeros((1, 1) + size, device="cuda")
+                tensors = torch.zeros((1, 1) + size, device=dev)
                 self.forward(tensors)
                 # further clone and detach it in the cache (just to be safe)
                 self.cache[size] = self.cache[size].clone().detach()

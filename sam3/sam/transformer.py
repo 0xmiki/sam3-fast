@@ -1,5 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates. All Rights Reserved
 
+import os
 import math
 from functools import partial
 from typing import Tuple, Type
@@ -282,7 +283,13 @@ class RoPEAttention(Attention):
         self.compute_cis = partial(
             compute_axial_cis, dim=self.internal_dim // self.num_heads, theta=rope_theta
         )
-        device = torch.device("cuda") if torch.cuda.is_available() else None
+        # During CPU-only initialization (e.g. Modal snapshot builder), we
+        # cannot allocate CUDA tensors. Honor SAM3_FORCE_CPU_INIT so that
+        # RoPE precomputations run on CPU in those environments.
+        if os.getenv("SAM3_FORCE_CPU_INIT") == "1":
+            device = torch.device("cpu")
+        else:
+            device = torch.device("cuda") if torch.cuda.is_available() else None
         self.freqs_cis = self.compute_cis(
             end_x=feat_sizes[0], end_y=feat_sizes[1], device=device
         )
