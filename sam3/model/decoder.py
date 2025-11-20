@@ -6,6 +6,7 @@ Inspired from Pytorch's version, adds the pre-norm variant
 
 from typing import Any, Dict, List, Optional
 
+import os
 import numpy as np
 
 import torch
@@ -324,8 +325,36 @@ class TransformerDecoder(nn.Module):
 
     @staticmethod
     def _get_coords(H, W, device):
-        coords_h = torch.arange(0, H, device=device, dtype=torch.float32) / H
-        coords_w = torch.arange(0, W, device=device, dtype=torch.float32) / W
+        """Get normalized coordinate grids on a safe device.
+
+        During CPU-only initialization (e.g. Modal snapshot builder), we
+        cannot allocate CUDA tensors. Honor SAM3_FORCE_CPU_INIT so that any
+        decoder precomputations run on CPU in those environments, while
+        retaining the original CUDA behavior when available.
+        """
+
+        # Force CPU for snapshot / CPU-only init.
+        if os.getenv("SAM3_FORCE_CPU_INIT") == "1":
+            safe_device = torch.device("cpu")
+        else:
+            # Normalize string/None inputs and gracefully fall back if CUDA
+            # was requested but is not actually available.
+            if device is None:
+                safe_device = (
+                    torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+                )
+            elif isinstance(device, str):
+                if device == "cuda" and not torch.cuda.is_available():
+                    safe_device = torch.device("cpu")
+                else:
+                    safe_device = torch.device(device)
+            elif isinstance(device, torch.device) and device.type == "cuda" and not torch.cuda.is_available():
+                safe_device = torch.device("cpu")
+            else:
+                safe_device = device
+
+        coords_h = torch.arange(0, H, device=safe_device, dtype=torch.float32) / H
+        coords_w = torch.arange(0, W, device=safe_device, dtype=torch.float32) / W
         return coords_h, coords_w
 
     def _get_rpb_matrix(self, reference_boxes, feat_size):
