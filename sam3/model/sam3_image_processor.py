@@ -1,6 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates. All Rights Reserved
 from typing import Dict, List
 
+import os
 import numpy as np
 import PIL
 import torch
@@ -12,12 +13,26 @@ from torchvision.transforms import v2
 
 
 class Sam3Processor:
-    """ """
+    """SAM3 image processor with device-aware initialization.
+
+    When SAM3_FORCE_CPU_INIT=="1", the processor will always initialize on CPU,
+    which is required for CPU-only environments such as Modal's snapshot
+    builder. Otherwise, it falls back to the requested device (default: "cuda")
+    while gracefully handling the case where CUDA is unavailable.
+    """
 
     def __init__(self, model, resolution=1008, device="cuda", confidence_threshold=0.5):
         self.model = model
         self.resolution = resolution
-        self.device = device
+
+        # Resolve device in a way that is safe for CPU-only init.
+        if os.getenv("SAM3_FORCE_CPU_INIT") == "1":
+            self.device = "cpu"
+        else:
+            if device == "cuda" and not torch.cuda.is_available():
+                self.device = "cpu"
+            else:
+                self.device = device
         self.transform = v2.Compose(
             [
                 v2.ToDtype(torch.uint8, scale=True),
@@ -29,8 +44,8 @@ class Sam3Processor:
         self.confidence_threshold = confidence_threshold
 
         self.find_stage = FindStage(
-            img_ids=torch.tensor([0], device=device, dtype=torch.long),
-            text_ids=torch.tensor([0], device=device, dtype=torch.long),
+            img_ids=torch.tensor([0], device=self.device, dtype=torch.long),
+            text_ids=torch.tensor([0], device=self.device, dtype=torch.long),
             input_boxes=None,
             input_boxes_mask=None,
             input_boxes_label=None,
